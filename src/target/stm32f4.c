@@ -103,12 +103,18 @@ static const char stm32f2_driver_str[] = "STM32F2xx";
 #define DBG_IWDG_STOP	(1 << 12)
 
 /* This routine uses word access.  Only usable on target voltage >2.7V */
-static const uint16_t stm32f4_flash_write_stub[] = {
-#include "flashstub/stm32f4.stub"
+static const uint16_t stm32f4_flash_write_x32_stub[] = {
+#include "flashstub/stm32f4_x32.stub"
+};
+
+/* This routine uses word access. Used on target voltage < 2.2V */
+static const uint16_t stm32f4_flash_write_x8_stub[] = {
+#include "flashstub/stm32f4_x8.stub"
 };
 
 #define SRAM_BASE 0x20000000
-#define STUB_BUFFER_BASE ALIGN(SRAM_BASE + sizeof(stm32f4_flash_write_stub), 4)
+#define STUB_X32_BUFFER_BASE ALIGN(SRAM_BASE + sizeof(stm32f4_flash_write_x32_stub), 4)
+#define STUB_X8_BUFFER_BASE ALIGN(SRAM_BASE + sizeof(stm32f4_flash_write_x8_stub), 4)
 
 struct stm32f4_flash {
 	struct target_flash f;
@@ -159,6 +165,10 @@ bool stm32f4_probe(target *t)
 		stm32f4_add_flash(t, 0x8110000, 0x10000, 0x10000, 16);
 		stm32f4_add_flash(t, 0x8120000, 0xE0000, 0x20000, 17);
 		/* Fall through for stuff common to F40x/F41x */
+        case 0x434: /* 469/479 */
+                /* Second bank for 2M parts. */
+                stm32f4_add_flash(t, 0x8100000, 0x10000, 0x4000, 12);
+                stm32f4_add_flash(t, 0x8110000, 0x10000, 0x10000, 16);
 	case 0x411: /* F205 */
 	case 0x413: /* F405 */
 	case 0x421: /* F446 */
@@ -256,12 +266,14 @@ static int stm32f4_flash_erase(struct target_flash *f, target_addr addr, size_t 
 static int stm32f4_flash_write(struct target_flash *f,
                                target_addr dest, const void *src, size_t len)
 {
+        int result;
 	/* Write buffer to target ram call stub */
-	target_mem_write(f->t, SRAM_BASE, stm32f4_flash_write_stub,
-	                 sizeof(stm32f4_flash_write_stub));
-	target_mem_write(f->t, STUB_BUFFER_BASE, src, len);
-	return cortexm_run_stub(f->t, SRAM_BASE, dest,
-	                        STUB_BUFFER_BASE, len, 0);
+                target_mem_write(f->t, SRAM_BASE, stm32f4_flash_write_x8_stub,
+	                 sizeof(stm32f4_flash_write_x8_stub));
+                target_mem_write(f->t, STUB_X8_BUFFER_BASE, src, len);
+	        result = cortexm_run_stub(f->t, SRAM_BASE, dest,
+	                        STUB_X8_BUFFER_BASE, len, 0);
+        return result;
 }
 
 static bool stm32f4_cmd_erase_mass(target *t)
